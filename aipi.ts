@@ -1,155 +1,136 @@
-import { DOMParser, Element, HTMLDocument } from "https://deno.land/x/deno_dom/deno-dom-wasm.ts";
-import { distinct } from "https://deno.land/std@0.171.0/collections/distinct.ts";
+import { Input } from 'https://deno.land/x/cliffy@v1.0.0-rc.3/prompt/input.ts';
+import { crawl } from './lib.ts';
+import OpenAI from 'npm:openai';
+import { ChatCompletionMessageParam } from 'npm:openai/resources/chat';
+import { authFromUserInput } from './auth.ts';
+import { _TextDecoder } from 'https://deno.land/std@0.151.0/node/_utils.ts';
 
-// const startPage = prompt("Page to start from: ");
-// const baseURL = prompt("Bounding URL: ");
+const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') });
 
+// const apiName = await Input.prompt("API name: ");
 
-function notEmpty<TValue>(value: TValue | null | undefined): value is TValue {
-  if (value === null || value === undefined) return false;
-  return true;
-}
+// // If file exists at cache/${apiName}, read variables from there
+// // Otherwise, prompt user for variables and write to cache/${apiName}
+// const cacheDir = 'cache';
+// const cachePath = `${cacheDir}/${apiName}.json`;
 
-async function anthropic(prompt: string) {
-  const claudePrompt = `\n\nHuman: ${prompt}\n\nAssistant:`;
-  const data = {
-    prompt: claudePrompt,
-    model: "claude-v1-100k",
-    // A maximum number of tokens to generate before stopping.
-    max_tokens_to_sample: 300,
-    stop_sequences: ["\n\nHuman:"],
-  };
-  const options = {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key":
-        "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",
-    },
-    body: JSON.stringify(data),
-  };
-
-  try {
-    console.log("Prompt: ", prompt);
-    console.log("fetching Anthropic completion...");
-    const resp = await fetch("https://api.anthropic.com/v1/complete", options);
-    const json = await resp.json();
-
-    // TODO: handle non-200 response
-    if (resp.status !== 200) {
-      console.error(`Got ${resp.status} from Anthropic`);
-      return { success: false, error: json };
-    }
-    return { success: true, data: json.completion };
-  } catch (err) {
-    // TODO: surface error in UI
-    console.error("Error getting completion: ", err);
-    return { success: false, error: err };
-  }
-}
-
-// async function crawl(startUrl: URL, allUrls: URL[]): Promise<URL[]> {
-    // visited[startUrl.href] = true;
-    // console.log(`Crawling ${startUrl.href} for URLs`);
-    // const start = await fetch(startUrl);
-    // const startHtmlString = await start.text();
-    // const document = new DOMParser().parseFromString(startHtmlString, "text/html");
-
-    // if (document) {
-    //     const urls = getOnwardUrls(document, startUrl)
-    //         .filter(u => !visited[u.href]);
-
-    //     console.log(`Got ${urls.length} URLs, iterating...`);
-    //     for (const url of urls) {
-    //         const newUrls = await crawl(url, [url, ...allUrls]);
-    //         // return newUrls;
-    //         allUrls = [...newUrls, ...allUrls];
-    //     }
-    // }
-
-    // return distinct(allUrls);
+// let cached;
+// try {
+//   const cached = await Deno.readTextFile(cachePath);
+// } catch (e) {
+//   console.error(`No cache file found at ${cachePath}`);
 // }
 
-async function crawl(startUrl: string, boundingPath?: string): Promise<Set<string>> {
-    const stack = [startUrl];
-    const visited: Set<string> = new Set();
-    const pageContents: Set<string> = new Set();
-
-    while (stack.length) {
-        const currentUrl = stack.pop();
-        if (!currentUrl) {
-            // Should never happen because of while (stack.length)
-            return visited;
-        }
-
-        // TODO: edge case. fetch error
-        console.log(`${currentUrl} added to visited set`);
-        visited.add(currentUrl);
-
-        // Get links and add unvisited to stack
-        console.log(`Crawling ${currentUrl} for URLs`);
-        const resp = await fetch(currentUrl);
-        const htmlString = await resp.text();
-        const document = new DOMParser().parseFromString(htmlString, "text/html");
-        if (document) {
-            for (const url of getOnwardUrls(document, currentUrl)) {
-                if (!visited.has(url) && (!boundingPath || url.includes(boundingPath)) && !stack.includes(url)) {
-                    console.log(`Adding ${url} to stack`);
-                    stack.push(url);
-
-                    const main = document.querySelector('.main')
-                    if (main) {
-                        pageContents.add(main.innerText);
-                    } else {
-                        pageContents.add(document.body.innerText);
-                    }
-                }
-            }
-        }
-    }
-
-    return pageContents;
+const documentationRootPage = (
+	await Input.prompt('Documentation root page: ')
+).trim();
+if (!documentationRootPage) {
+	console.error('No documentation root page provided');
+	Deno.exit(1);
 }
-
-function getOnwardUrls(document: HTMLDocument, baseUrl: string): string[] {
-    const anchorElements = [...document.querySelectorAll("a")] as Element[];
-
-    console.log(`${anchorElements.length} anchor elements on page`);
-    const urls: string[] = anchorElements
-        .map(anchorElement => {
-            const href = anchorElement.getAttribute("href");
-            if (href) {
-                // Second argument gets ignored if href is an absolute path
-                const url = new URL(href, baseUrl);
-                url.search = '';
-                url.hash = '';
-                return url.toString();
-            } else {
-                // console.error("No href on anchor element");
-                return null;
-            }
-        })
-        .filter(notEmpty)
-    
-    console.log(`${urls.length} of which had hrefs`);
-    
-    const distinctUrls = distinct(urls);
-    
-    console.log(`${distinctUrls.length} of which were distinct (after stripping hash and query string)`);
-
-    return distinctUrls;
-}
-
-const pages = await crawl(
-    "https://developer-specs.company-information.service.gov.uk/guides/index",
-    "https://developer-specs.company-information.service.gov.uk"
+const documentationBoundingPath = (
+	await Input.prompt('Documentation bounding path: ')
+).trim();
+const documentationPages = await crawl(
+	documentationRootPage,
+	documentationBoundingPath,
 );
-console.log('===========================');
-console.log('FINISHED!!!!!');
-console.log(`Got ${pages.size} pages`);
-console.log('===========================');
+console.error(`Got ${documentationPages.size} pages`);
 
+// if (prompt('Show docs? (Y/N)') === 'Y') {
+// 	console.dir(documentationPages);
+// }
 
-const prompt = `You will receive the documentation to an API, enclosed in triple quotes ("""). Each page of documentation will be separated by the line =======. Your job is to translate user queries in human language into queries for the API. Here is the documentation: \n"""\n${Array.from(pages).join("/n=======/n")}\n"""\n. Here is the user query: which companies is Jacob Rees-Mogg an officer of?`;
-const completion = await anthropic(prompt);
-console.log(completion.data);
+// if (prompt('Continue? (Y/N)') !== 'Y') {
+// 	Deno.exit(0);
+// }
+const auth = await authFromUserInput();
+
+while (true) {
+	const query = await Input.prompt('What do you want to do with the API? ');
+
+	const requestType = `type Request = {
+  /**
+   * A string to set request's URL.
+   * Any GET parameters must be encoded in the URL as query parameters.
+   */
+  url: string;
+
+  /**
+   * A string to set request's method.
+   */
+  method: string;
+
+  /**
+   * An optional object to set request's body.
+   * This should only be used for POST requests.
+   */
+  body?: string;
+}`;
+
+	const systemPrompt: ChatCompletionMessageParam = {
+		role: 'system',
+		content:
+			'You are a helpful assistant that helps developers query unfamiliar APIs. You will receive the documentation to an API, enclosed in triple quotes ("""). Each page of documentation will be separated by the line =======. Your job is to translate user queries in human language into queries for the API. You must return only valid JSON. Do not wrap the JSON in any other text. Do not wrap the JSON in a ```json``` code fence.',
+	};
+
+	const userPromptMessage: string = [
+		`You will receive the documentation to an API, enclosed in triple quotes ("""). Each page of documentation will be separated by the line =======. Your job is to translate user queries in human language into queries for the API. Here is the documentation: \n"""\n${Array.from(
+			documentationPages,
+		).join('/n=======/n')}\n"""`,
+		`Please provide the API call as a JSON object matching the following type: ${requestType}. Do not wrap the object in any other text. Do not wrap the object in a \`\`\`json\`\`\` code fence.`,
+		`Here is the user query: "${query}"`,
+	].join('\n');
+
+	// console.log(userPromptMessage);
+
+	const userPrompt: ChatCompletionMessageParam = {
+		role: 'user',
+		content: userPromptMessage,
+	};
+
+	const chatCompletion = await openai.chat.completions.create({
+		messages: [systemPrompt, userPrompt],
+		model: 'gpt-4-1106-preview',
+	});
+
+	const response = chatCompletion.choices[0].message.content;
+	console.error('Response: ');
+	console.dir(response);
+
+	if (!response) {
+		console.log('Response empty, exiting');
+		Deno.exit(0);
+	}
+
+	if (prompt('Continue? (Y/N)') !== 'Y') {
+		Deno.exit(0);
+	}
+
+	const requestData = JSON.parse(response);
+
+	let requestInit: RequestInit = {
+		method: requestData.method,
+		body: requestData.body,
+	};
+	let url = new URL(requestData.url);
+	if (auth?.headers) {
+		requestInit = {
+			...requestInit,
+			headers: auth.headers,
+		};
+	} else if (auth?.queryParameters) {
+		url.searchParams.append(
+			auth.queryParameters.name,
+			auth.queryParameters.value,
+		);
+	}
+
+	console.log('Request init: ');
+	console.dir(requestInit);
+
+	const resp = await fetch(url, requestInit);
+	const json = await resp.json();
+	console.log('Response JSON: ');
+	console.dir(json);
+}
