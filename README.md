@@ -2,7 +2,7 @@
 
 Query any API with natural language.
 
-Provide a starting URL and a bounding parent, and it will crawl the docs, then send them to an LLM (current GPT-4) to construct an API query.
+Provide a starting URL and a bounding parent, and it will crawl the docs, then send them to an LLM (currently GPT-4) to construct an API query.
 
 Runs the API query using auth info that you provide (this does not get sent to the LLM).
 
